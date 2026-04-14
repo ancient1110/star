@@ -117,6 +117,7 @@
             new THREE.MeshBasicMaterial({ color: 0xffe877 })
         );
         scene.add(sun);
+        sunLight.position.copy(sun.position);
         const glow = new THREE.Mesh(
             new THREE.SphereGeometry(15, 32, 32),
             new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending })
@@ -196,6 +197,23 @@
         // 【关键修复1】同上
         scene.add(earthUmbra);
         scene.add(earthPenumbra);
+
+        const _tmpSunToCaster = new THREE.Vector3();
+        const _tmpWorldDir = new THREE.Vector3();
+        const _tmpQuaternion = new THREE.Quaternion();
+        const _zAxis = new THREE.Vector3(0, 0, 1);
+
+        function syncShadowCone(cone, casterWorldPos, casterRadius) {
+            _tmpSunToCaster.subVectors(casterWorldPos, sunLight.position);
+            if (_tmpSunToCaster.lengthSq() < 1e-8) return;
+
+            _tmpWorldDir.copy(_tmpSunToCaster).normalize();
+            _tmpQuaternion.setFromUnitVectors(_zAxis, _tmpWorldDir);
+            cone.quaternion.copy(_tmpQuaternion);
+
+            // 锥体从表面发出，而非从天体中心发出，避免“影锥落点超前”
+            cone.position.copy(casterWorldPos).addScaledVector(_tmpWorldDir, casterRadius);
+        }
 
         // ================= 4. 天文数据与逻辑 =================
         const eclipseData = {
@@ -287,18 +305,11 @@
             const moonWorldPos = new THREE.Vector3();
             moonGroup.getWorldPosition(moonWorldPos);
 
-            // 【关键修复3】每次渲染强制将圆锥的底部移动到星球的世界坐标上
-            earthUmbra.position.copy(earthWorldPos);
-            earthPenumbra.position.copy(earthWorldPos);
-            moonUmbra.position.copy(moonWorldPos);
-            moonPenumbra.position.copy(moonWorldPos);
-
-            // 【关键修复4】基于绝对世界坐标系进行 lookAt（太阳在0,0,0。所以背离太阳的向量就是 坐标乘以2）
-            // 这样无论轨道怎么倾斜、地球怎么转，代表光路的几何锥体永远与太阳光的投射射线绝对平行。
-            earthUmbra.lookAt(earthWorldPos.clone().multiplyScalar(2));
-            earthPenumbra.lookAt(earthWorldPos.clone().multiplyScalar(2));
-            moonUmbra.lookAt(moonWorldPos.clone().multiplyScalar(2));
-            moonPenumbra.lookAt(moonWorldPos.clone().multiplyScalar(2));
+            // 让影锥严格沿“太阳 -> 天体 -> 阴影”方向，并从天体背日侧表面出发
+            syncShadowCone(earthUmbra, earthWorldPos, earthRadius);
+            syncShadowCone(earthPenumbra, earthWorldPos, earthRadius);
+            syncShadowCone(moonUmbra, moonWorldPos, moonRadius);
+            syncShadowCone(moonPenumbra, moonWorldPos, moonRadius);
 
             if(!currentConfig.showMoonShadows) {
                 controls.target.copy(moonWorldPos);
