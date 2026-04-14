@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>3D 日月食 真实物理光影动态推演</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050508; color: white; font-family: 'Microsoft YaHei', sans-serif; }
+        #canvas-container { width: 100vw; height: 100vh; display: block; }
+        
+        #ui-panel {
+            position: absolute; top: 15px; left: 15px;
+            background: rgba(20, 20, 30, 0.85); padding: 18px;
+            border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.8);
+            border: 1px solid #445; width: 320px; backdrop-filter: blur(8px);
+        }
+
+        h1 { font-size: 1.15rem; margin-top: 0; color: #4da8da; border-bottom: 1px solid #555; padding-bottom: 10px; }
+        h2 { font-size: 0.95rem; color: #f2c94c; margin: 12px 0 6px 0; }
+        
+        button {
+            background: #2a2a35; color: #fff; border: 1px solid #555;
+            padding: 6px 0; margin: 3px 1%; border-radius: 4px;
+            cursor: pointer; transition: all 0.2s; font-size: 0.85rem; width: 47%;
+            display: inline-block;
+        }
+        button:hover { background: #4da8da; }
+        button.active { background: #e74c3c; border-color: #e74c3c; font-weight: bold; }
+        .btn-full { width: 97%; }
+
+        #timeline-container { margin-top: 15px; padding-top: 15px; border-top: 1px solid #555; }
+        #timeline { width: 100%; cursor: pointer; accent-color: #e74c3c; }
+        .time-labels { display: flex; justify-content: space-between; font-size: 0.75rem; color: #aaa; margin-top: 2px; }
+        
+        #info-box {
+            margin-top: 15px; font-size: 0.85rem; line-height: 1.5; color: #eee;
+            background: rgba(0,0,0,0.6); padding: 12px; border-radius: 6px; border-left: 4px solid #4da8da;
+        }
+
+        #instructions {
+            position: absolute; bottom: 15px; width: 100%; text-align: center;
+            pointer-events: none; color: #aaa; font-size: 0.85rem; text-shadow: 1px 1px 2px #000;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-panel">
+        <h1>日月食物理光影推演</h1>
+        
+        <h2>☀️ 日食 (新月时分)</h2>
+        <button onclick="setEclipse('solar_total')" id="btn_solar_total">日全食</button>
+        <button onclick="setEclipse('solar_annular')" id="btn_solar_annular">日环食</button>
+        <button onclick="setEclipse('solar_partial')" id="btn_solar_partial" class="btn-full">日偏食</button>
+
+        <h2>🌕 月食 (满月时分)</h2>
+        <button onclick="setEclipse('lunar_total')" id="btn_lunar_total">月全食</button>
+        <button onclick="setEclipse('lunar_partial')" id="btn_lunar_partial">月偏食</button>
+        <button onclick="setEclipse('lunar_penumbral')" id="btn_lunar_penumbral" class="btn-full">半影月食</button>
+
+        <div id="timeline-container">
+            <div style="font-size:0.85rem; margin-bottom:5px; color:#f2c94c;">推演时间轴：</div>
+            <input type="range" id="timeline" min="-1" max="1" step="0.005" value="-1">
+            <div class="time-labels"><span>前</span><span>食甚</span><span>后</span></div>
+            <label style="font-size:0.85rem; display:flex; align-items:center; margin-top:10px; cursor:pointer;">
+                <input type="checkbox" id="autoplay" checked style="margin-right:5px;"> 自动播放
+            </label>
+        </div>
+
+        <div id="info-box">请选择类型</div>
+    </div>
+
+    <div id="instructions">
+        🖱️ 左键旋转 | 🖱️ 滚轮缩放 | 🖱️ 右键平移 | 注意观察星球表面的**真实物理光影**变化
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // ================= 1. 场景与引擎设置 =================
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 2000);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true; 
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        scene.add(new THREE.AmbientLight(0x444455)); 
+
+        const sunLight = new THREE.PointLight(0xffffff, 4, 0, 0);
+        sunLight.castShadow = true;
+        sunLight.shadow.mapSize.width = 2048;
+        sunLight.shadow.mapSize.height = 2048;
+        sunLight.shadow.bias = -0.001;
+        scene.add(sunLight);
+
+        // ================= 2. 建立天体与轨道系统 =================
+        const sun = new THREE.Mesh(
+            new THREE.SphereGeometry(12, 32, 32),
+            new THREE.MeshBasicMaterial({ color: 0xffe877 })
+        );
+        scene.add(sun);
+        const glow = new THREE.Mesh(
+            new THREE.SphereGeometry(15, 32, 32),
+            new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending })
+        );
+        sun.add(glow);
+
+        const earthDist = 120;
+        const earthRadius = 3;
+        const earthGroup = new THREE.Group(); 
+        scene.add(earthGroup);
+
+        const earthOrbitLine = new THREE.LineLoop(
+            new THREE.BufferGeometry().setFromPoints(new THREE.Path().absarc(0,0,earthDist,0,Math.PI*2).getPoints(128)),
+            new THREE.LineBasicMaterial({ color: 0x555555, transparent: true, opacity: 0.5 })
+        );
+        earthOrbitLine.rotation.x = Math.PI / 2;
+        scene.add(earthOrbitLine);
+
+        const earth = new THREE.Mesh(
+            new THREE.SphereGeometry(earthRadius, 64, 64),
+            new THREE.MeshPhongMaterial({ color: 0x3399ff, specular: 0x222222, shininess: 15 })
+        );
+        earth.castShadow = true;
+        earth.receiveShadow = true;
+        earthGroup.add(earth);
+
+        const moonRadius = 0.8;
+        const moonOrbitTiltGroup = new THREE.Group(); 
+        earthGroup.add(moonOrbitTiltGroup);
+        const moonGroup = new THREE.Group(); 
+        moonOrbitTiltGroup.add(moonGroup);
+
+        let moonOrbitLine;
+        function updateMoonOrbit(radius) {
+            if(moonOrbitLine) moonOrbitTiltGroup.remove(moonOrbitLine);
+            moonOrbitLine = new THREE.LineLoop(
+                new THREE.BufferGeometry().setFromPoints(new THREE.Path().absarc(0,0,radius,0,Math.PI*2).getPoints(64)),
+                new THREE.LineBasicMaterial({ color: 0x888888 })
+            );
+            moonOrbitLine.rotation.x = Math.PI / 2;
+            moonOrbitTiltGroup.add(moonOrbitLine);
+        }
+
+        const moon = new THREE.Mesh(
+            new THREE.SphereGeometry(moonRadius, 32, 32),
+            new THREE.MeshPhongMaterial({ color: 0xdddddd, shininess: 0 })
+        );
+        moon.castShadow = true;
+        moon.receiveShadow = true;
+        moonGroup.add(moon);
+
+        // ================= 3. 透明几何阴影锥 (修改：直接加入宇宙世界，不再嵌套) =================
+        function createShadowCone(baseRadius, endRadius, length, isUmbra) {
+            const geo = new THREE.CylinderGeometry(endRadius, baseRadius, length, 64, 1, true);
+            geo.rotateX(Math.PI / 2); 
+            geo.translate(0, 0, length / 2); 
+            
+            const mat = new THREE.MeshBasicMaterial({
+                color: isUmbra ? 0x000000 : 0xaaaaaa,
+                transparent: true,
+                opacity: isUmbra ? 0.6 : 0.15,
+                side: THREE.DoubleSide,
+                depthWrite: false
+            });
+            return new THREE.Mesh(geo, mat);
+        }
+
+        const moonUmbraLength = 13.5;
+        const moonUmbra = createShadowCone(moonRadius, 0.01, moonUmbraLength, true); 
+        const moonPenumbra = createShadowCone(moonRadius, 3.5, 20, false);
+        // 【关键修复1】不再 add 进月球编组，而是直接添加进全局的 scene 中
+        scene.add(moonUmbra);
+        scene.add(moonPenumbra);
+
+        const earthUmbra = createShadowCone(earthRadius, 0.01, 40, true); 
+        const earthPenumbra = createShadowCone(earthRadius, 9, 45, false);
+        // 【关键修复1】同上
+        scene.add(earthUmbra);
+        scene.add(earthPenumbra);
+
+        // ================= 4. 天文数据与逻辑 =================
+        const eclipseData = {
+            'solar_total': {
+                title: "日全食 (本影触及地球)",
+                desc: "月球在日地之间且距离地球较近。几何本影锥精准对齐了引擎生成的物理黑影投射。您会看到它们完美重合在一起扫过地表。",
+                baseAngle: Math.PI, radius: 11, tiltZ: 0, showMoonShadows: true
+            },
+            'solar_annular': {
+                title: "日环食 (本影过短)",
+                desc: "月球距离地球较远。本影锥尖端悬空，但由于游戏引擎采用的是“点光源”物理逻辑，地表依旧会产生一个发散放大的淡虚影（这是所有3D引擎的局限，真实世界中这里是明亮的环食区）。",
+                baseAngle: Math.PI, radius: 16, tiltZ: 0, showMoonShadows: true
+            },
+            'solar_partial': {
+                title: "日偏食 (轨道倾斜)",
+                desc: "轨道存在倾角。本影锥偏离了地球中心，黑影仅擦过地球边缘。",
+                baseAngle: Math.PI, radius: 12.5, tiltZ: 0.28, showMoonShadows: true
+            },
+            'lunar_total': {
+                title: "月全食 (月亮切入黑影)",
+                desc: "地球在日月之间。月球完全钻入了收束的几何本影锥内部，同时也被物理阴影彻底屏蔽了光线。",
+                baseAngle: 0, radius: 13, tiltZ: 0, showMoonShadows: false
+            },
+            'lunar_partial': {
+                title: "月偏食 (擦肩而过)",
+                desc: "轨道倾斜，月球只有下半部分切入了本影锥。您可以观察真实的明暗分界线。",
+                baseAngle: 0, radius: 13, tiltZ: 0.15, showMoonShadows: false
+            },
+            'lunar_penumbral': {
+                title: "半影月食 (微弱黯淡)",
+                desc: "月球彻底错过了深色的本影区，仅仅从浅色的半影锥中穿过。",
+                baseAngle: 0, radius: 13, tiltZ: 0.3, showMoonShadows: false
+            }
+        };
+
+        let currentConfig = null;
+        let timelineEl = document.getElementById('timeline');
+        let autoplayEl = document.getElementById('autoplay');
+
+        window.setEclipse = function(type) {
+            document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+            document.getElementById('btn_' + type).classList.add('active');
+
+            currentConfig = eclipseData[type];
+            document.getElementById('info-box').innerHTML = `<strong>${currentConfig.title}</strong><br><br>${currentConfig.desc}`;
+            
+            moonUmbra.visible = currentConfig.showMoonShadows;
+            moonPenumbra.visible = currentConfig.showMoonShadows;
+            earthUmbra.visible = !currentConfig.showMoonShadows;
+            earthPenumbra.visible = !currentConfig.showMoonShadows;
+
+            updateMoonOrbit(currentConfig.radius);
+            moonOrbitTiltGroup.rotation.z = currentConfig.tiltZ;
+            timelineEl.value = -1;
+            
+            if(type.startsWith('solar')) {
+                camera.position.set(earthDist + 20, 10, 20);
+                controls.target.copy(earthGroup.position);
+            } else {
+                camera.position.set(earthDist + 22, 5, 20);
+            }
+        };
+
+        // ================= 5. 位置推演与阴影追踪 =================
+        function updatePositions(t) {
+            if(!currentConfig) return;
+
+            const earthAngle = t * 0.03; 
+            earthGroup.position.set(
+                Math.cos(earthAngle) * earthDist,
+                0,
+                Math.sin(earthAngle) * earthDist
+            );
+
+            const moonAngle = currentConfig.baseAngle + (t * 0.35);
+            moonGroup.position.set(
+                Math.cos(moonAngle) * currentConfig.radius,
+                0,
+                Math.sin(moonAngle) * currentConfig.radius
+            );
+
+            earth.rotation.y = t * 8; 
+            moon.rotation.y = moonAngle; 
+
+            // 【关键修复2】获取绝对世界坐标
+            const earthWorldPos = new THREE.Vector3();
+            earthGroup.getWorldPosition(earthWorldPos);
+            
+            const moonWorldPos = new THREE.Vector3();
+            moonGroup.getWorldPosition(moonWorldPos);
+
+            // 【关键修复3】每次渲染强制将圆锥的底部移动到星球的世界坐标上
+            earthUmbra.position.copy(earthWorldPos);
+            earthPenumbra.position.copy(earthWorldPos);
+            moonUmbra.position.copy(moonWorldPos);
+            moonPenumbra.position.copy(moonWorldPos);
+
+            // 【关键修复4】基于绝对世界坐标系进行 lookAt（太阳在0,0,0。所以背离太阳的向量就是 坐标乘以2）
+            // 这样无论轨道怎么倾斜、地球怎么转，代表光路的几何锥体永远与太阳光的投射射线绝对平行。
+            earthUmbra.lookAt(earthWorldPos.clone().multiplyScalar(2));
+            earthPenumbra.lookAt(earthWorldPos.clone().multiplyScalar(2));
+            moonUmbra.lookAt(moonWorldPos.clone().multiplyScalar(2));
+            moonPenumbra.lookAt(moonWorldPos.clone().multiplyScalar(2));
+
+            if(!currentConfig.showMoonShadows) {
+                controls.target.copy(moonWorldPos);
+            } else {
+                controls.target.copy(earthWorldPos);
+            }
+        }
+
+        // ================= 6. 渲染循环 =================
+        timelineEl.addEventListener('input', () => { autoplayEl.checked = false; });
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            let t = parseFloat(timelineEl.value);
+            if (autoplayEl.checked) {
+                t += 0.003;
+                if (t > 1) t = -1; 
+                timelineEl.value = t;
+            }
+
+            updatePositions(t);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        setEclipse('solar_total');
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
