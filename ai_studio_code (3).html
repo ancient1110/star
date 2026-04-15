@@ -96,7 +96,7 @@
 
     <div id="observer-panel">
         <h2>📍 同步观测视窗</h2>
-        <span class="observer-tag">🌟 固定观测点：当前时间段最佳观测位置</span>
+        <span class="observer-tag">🌟 固定观测点：食甚中点最佳观测位置（不随时间轴漂移）</span>
         <canvas id="observer-view" width="300" height="300"></canvas>
         <div id="observer-meta">等待初始化观测点…</div>
     </div>
@@ -600,9 +600,7 @@
 
         timelineEl.addEventListener('input', () => {
             autoplayEl.checked = false;
-            const t = parseFloat(timelineEl.value);
-            updateObserverAnchor(t);
-            lastObserverSyncT = t;
+            // 仅切换时间轴，不再改动固定观测点，避免观测标记随时间漂移
         });
 
         function animate() {
