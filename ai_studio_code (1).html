@@ -136,15 +136,99 @@
         earthOrbitLine.rotation.x = Math.PI / 2;
         scene.add(earthOrbitLine);
 
+        const earthMaterial = new THREE.MeshPhongMaterial({ color: 0x3399ff, specular: 0x222222, shininess: 15 });
+        const eclipseUniforms = {
+            sunWorldPos: { value: new THREE.Vector3() },
+            moonWorldPos: { value: new THREE.Vector3() },
+            sunRadius: { value: 12.0 },
+            moonRadius: { value: 0.8 },
+            eclipseStrength: { value: 1.0 }
+        };
+
+        earthMaterial.onBeforeCompile = (shader) => {
+            shader.uniforms.sunWorldPos = eclipseUniforms.sunWorldPos;
+            shader.uniforms.moonWorldPos = eclipseUniforms.moonWorldPos;
+            shader.uniforms.sunRadius = eclipseUniforms.sunRadius;
+            shader.uniforms.moonRadius = eclipseUniforms.moonRadius;
+            shader.uniforms.eclipseStrength = eclipseUniforms.eclipseStrength;
+
+            const hasVertexHooks = shader.vertexShader.includes('#include <common>') && shader.vertexShader.includes('#include <worldpos_vertex>');
+            const hasFragmentHooks = shader.fragmentShader.includes('#include <common>') && shader.fragmentShader.includes('#include <dithering_fragment>');
+
+            // 避免合并冲突或 three 版本差异导致注入失败后整页“无反应”
+            if (!hasVertexHooks || !hasFragmentHooks) {
+                console.warn('Eclipse shader patch skipped: expected shader hooks not found.');
+                return;
+            }
+
+            shader.vertexShader = shader.vertexShader.replace(
+                '#include <common>',
+                `#include <common>
+ varying vec3 vWorldPos;`
+            ).replace(
+                '#include <worldpos_vertex>',
+                `#include <worldpos_vertex>
+ vWorldPos = worldPosition.xyz;`
+            );
+
+            shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <common>',
+                `#include <common>
+ varying vec3 vWorldPos;
+ uniform vec3 sunWorldPos;
+ uniform vec3 moonWorldPos;
+ uniform float sunRadius;
+ uniform float moonRadius;
+ uniform float eclipseStrength;
+
+ float diskOverlapRatio(float rs, float rm, float d) {
+     float pi = 3.141592653589793;
+     if (d >= rs + rm) return 0.0;
+     if (d <= abs(rs - rm)) {
+         float minR = min(rs, rm);
+         return (minR * minR) / (rs * rs);
+     }
+
+     float rs2 = rs * rs;
+     float rm2 = rm * rm;
+     float alpha = acos(clamp((d * d + rs2 - rm2) / (2.0 * d * rs), -1.0, 1.0));
+     float beta = acos(clamp((d * d + rm2 - rs2) / (2.0 * d * rm), -1.0, 1.0));
+     float area = rs2 * alpha + rm2 * beta - 0.5 * sqrt(max(0.0, (-d + rs + rm) * (d + rs - rm) * (d - rs + rm) * (d + rs + rm)));
+     return clamp(area / (pi * rs2), 0.0, 1.0);
+ }`
+            ).replace(
+                '#include <dithering_fragment>',
+                `float eclipse = 0.0;
+ vec3 toSun = sunWorldPos - vWorldPos;
+ vec3 toMoon = moonWorldPos - vWorldPos;
+ float distSun = length(toSun);
+ float distMoon = length(toMoon);
+
+ if (eclipseStrength > 0.0 && distSun > sunRadius && distMoon > moonRadius) {
+     vec3 sunDir = normalize(toSun);
+     vec3 moonDir = normalize(toMoon);
+     float sep = acos(clamp(dot(sunDir, moonDir), -1.0, 1.0));
+     float sunAng = asin(clamp(sunRadius / distSun, 0.0, 1.0));
+     float moonAng = asin(clamp(moonRadius / distMoon, 0.0, 1.0));
+     float rawOcc = diskOverlapRatio(max(sunAng, 1e-5), moonAng, sep);
+     eclipse = pow(rawOcc, 0.65) * eclipseStrength;
+ }
+
+ outgoingLight *= (1.0 - 0.95 * clamp(eclipse, 0.0, 1.0));
+ #include <dithering_fragment>`
+            );
+        };
+
         const earth = new THREE.Mesh(
             new THREE.SphereGeometry(earthRadius, 64, 64),
-            new THREE.MeshPhongMaterial({ color: 0x3399ff, specular: 0x222222, shininess: 15 })
+            earthMaterial
         );
         earth.castShadow = true;
         earth.receiveShadow = true;
         earthGroup.add(earth);
 
         const moonRadius = 0.8;
+        eclipseUniforms.moonRadius.value = moonRadius;
         const moonOrbitTiltGroup = new THREE.Group(); 
         earthGroup.add(moonOrbitTiltGroup);
         const moonGroup = new THREE.Group(); 
@@ -165,7 +249,7 @@
             new THREE.SphereGeometry(moonRadius, 32, 32),
             new THREE.MeshPhongMaterial({ color: 0xdddddd, shininess: 0 })
         );
-        moon.castShadow = true;
+        moon.castShadow = false;
         moon.receiveShadow = true;
         moonGroup.add(moon);
 
@@ -224,7 +308,7 @@
             },
             'solar_annular': {
                 title: "日环食 (本影过短)",
-                desc: "月球距离地球较远。本影锥尖端悬空，但由于游戏引擎采用的是“点光源”物理逻辑，地表依旧会产生一个发散放大的淡虚影（这是所有3D引擎的局限，真实世界中这里是明亮的环食区）。",
+                desc: "月球距离地球较远，本影锥尖端悬空。地表遮光改为数学圆盘重叠模型：中心区保持较深暗化，外围半影平滑过渡，不再出现发散放大的淡虚影。",
                 baseAngle: Math.PI, radius: 16, tiltZ: 0, showMoonShadows: true
             },
             'solar_partial': {
@@ -265,6 +349,9 @@
             earthUmbra.visible = !currentConfig.showMoonShadows;
             earthPenumbra.visible = !currentConfig.showMoonShadows;
 
+            // 日食阶段用纯数学遮挡模型替代引擎的发散投影，避免“淡虚影放大”
+            eclipseUniforms.eclipseStrength.value = currentConfig.showMoonShadows ? 1.0 : 0.0;
+
             updateMoonOrbit(currentConfig.radius);
             moonOrbitTiltGroup.rotation.z = currentConfig.tiltZ;
             timelineEl.value = -1;
@@ -304,6 +391,9 @@
             
             const moonWorldPos = new THREE.Vector3();
             moonGroup.getWorldPosition(moonWorldPos);
+
+            eclipseUniforms.sunWorldPos.value.copy(sunLight.position);
+            eclipseUniforms.moonWorldPos.value.copy(moonWorldPos);
 
             // 让影锥严格沿“太阳 -> 天体 -> 阴影”方向，并从天体背日侧表面出发
             syncShadowCone(earthUmbra, earthWorldPos, earthRadius);
