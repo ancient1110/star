@@ -247,11 +247,14 @@
 
         const moon = new THREE.Mesh(
             new THREE.SphereGeometry(moonRadius, 32, 32),
-            new THREE.MeshPhongMaterial({ color: 0xdddddd, shininess: 0 })
+            new THREE.MeshPhongMaterial({ color: 0xced4df, specular: 0x7f8fa8, shininess: 26 })
         );
         moon.castShadow = false;
         moon.receiveShadow = true;
         moonGroup.add(moon);
+        const moonBounceLight = new THREE.PointLight(0xbfd1ff, 0, 45, 2);
+        moonBounceLight.castShadow = false;
+        scene.add(moonBounceLight);
 
         // ================= 3. 透明几何阴影锥 (修改：直接加入宇宙世界，不再嵌套) =================
         function createShadowCone(baseRadius, endRadius, length, isUmbra) {
@@ -286,6 +289,23 @@
         const _tmpWorldDir = new THREE.Vector3();
         const _tmpQuaternion = new THREE.Quaternion();
         const _zAxis = new THREE.Vector3(0, 0, 1);
+        const _tmpMoonToSun = new THREE.Vector3();
+        const _tmpMoonToEarth = new THREE.Vector3();
+
+        function diskOverlapRatio(rs, rm, d) {
+            if (d >= rs + rm) return 0;
+            if (d <= Math.abs(rs - rm)) {
+                const minR = Math.min(rs, rm);
+                return (minR * minR) / (rs * rs);
+            }
+
+            const rs2 = rs * rs;
+            const rm2 = rm * rm;
+            const alpha = Math.acos(THREE.MathUtils.clamp((d * d + rs2 - rm2) / (2 * d * rs), -1, 1));
+            const beta = Math.acos(THREE.MathUtils.clamp((d * d + rm2 - rs2) / (2 * d * rm), -1, 1));
+            const area = rs2 * alpha + rm2 * beta - 0.5 * Math.sqrt(Math.max(0, (-d + rs + rm) * (d + rs - rm) * (d - rs + rm) * (d + rs + rm)));
+            return THREE.MathUtils.clamp(area / (Math.PI * rs2), 0, 1);
+        }
 
         function syncShadowCone(cone, casterWorldPos, casterRadius) {
             _tmpSunToCaster.subVectors(casterWorldPos, sunLight.position);
@@ -400,6 +420,25 @@
             syncShadowCone(earthPenumbra, earthWorldPos, earthRadius);
             syncShadowCone(moonUmbra, moonWorldPos, moonRadius);
             syncShadowCone(moonPenumbra, moonWorldPos, moonRadius);
+
+            // 月面反光：按“月球受日照 × 面向地球程度 × 是否被地球本影遮挡”估算，回照到地球
+            _tmpMoonToSun.subVectors(sunLight.position, moonWorldPos);
+            _tmpMoonToEarth.subVectors(earthWorldPos, moonWorldPos);
+            const moonToSunDist = _tmpMoonToSun.length();
+            const moonToEarthDist = _tmpMoonToEarth.length();
+
+            let lunarShadowFactor = 1;
+            if (moonToSunDist > eclipseUniforms.sunRadius.value && moonToEarthDist > earthRadius) {
+                const sep = _tmpMoonToSun.clone().normalize().angleTo(_tmpMoonToEarth.clone().normalize());
+                const sunAng = Math.asin(THREE.MathUtils.clamp(eclipseUniforms.sunRadius.value / moonToSunDist, 0, 1));
+                const earthAng = Math.asin(THREE.MathUtils.clamp(earthRadius / moonToEarthDist, 0, 1));
+                const occ = diskOverlapRatio(Math.max(sunAng, 1e-5), earthAng, sep);
+                lunarShadowFactor = 1 - occ;
+            }
+
+            const phaseFactor = Math.max(_tmpMoonToSun.normalize().dot(_tmpMoonToEarth.normalize()), 0);
+            moonBounceLight.position.copy(moonWorldPos);
+            moonBounceLight.intensity = 0.55 * phaseFactor * lunarShadowFactor;
 
             if(!currentConfig.showMoonShadows) {
                 controls.target.copy(moonWorldPos);
