@@ -348,7 +348,7 @@
         let observerRecalcAccumulator = 0;
         
         const observerMarker = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 12), new THREE.MeshBasicMaterial({ color: 0xff3333 }));
-        earthGroup.add(observerMarker);
+        earth.add(observerMarker);
 
         function latLonToLocal(latDeg, lonDeg, radius) {
             const lat = THREE.MathUtils.degToRad(latDeg);
@@ -364,7 +364,7 @@
             for (let lat = -70; lat <= 70; lat += 10) {
                 for (let lon = -180; lon < 180; lon += 10) {
                     const local = latLonToLocal(lat, lon, earthRadius);
-                    const obsWorld = earthGroup.position.clone().add(local);
+                    const obsWorld = earth.localToWorld(local.clone());
                     const moonWorld = moonGroup.getWorldPosition(new THREE.Vector3());
                     const up = obsWorld.clone().sub(earthGroup.position).normalize();
                     
@@ -410,7 +410,7 @@
             observerCtx.fillRect(0, 0, w, h);
 
             const obsLocal = latLonToLocal(currentObserver.lat, currentObserver.lon, earthRadius);
-            const obsWorld = earthGroup.position.clone().add(obsLocal);
+            const obsWorld = earth.localToWorld(obsLocal.clone());
             const moonWorld = moonGroup.getWorldPosition(new THREE.Vector3());
             
             const toSun = sunLight.position.clone().sub(obsWorld);
