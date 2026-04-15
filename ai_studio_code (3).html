@@ -355,39 +355,82 @@
             return new THREE.Vector3(radius * Math.cos(lat) * Math.cos(lon), radius * Math.sin(lat), radius * Math.cos(lat) * Math.sin(lon));
         }
 
+        function getObserverMetrics(lat, lon) {
+            const local = latLonToLocal(lat, lon, earthRadius);
+            const obsWorld = earth.localToWorld(local.clone());
+            const moonWorld = moonGroup.getWorldPosition(new THREE.Vector3());
+            const up = obsWorld.clone().sub(earthGroup.position).normalize();
+
+            const toSun = sunLight.position.clone().sub(obsWorld);
+            const toMoon = moonWorld.clone().sub(obsWorld);
+            const sunDist = toSun.length();
+            const moonDist = toMoon.length();
+            const sunDir = toSun.normalize();
+            const moonDir = toMoon.normalize();
+
+            const sunAltSin = sunDir.dot(up);
+            const moonAltSin = moonDir.dot(up);
+            const sep = sunDir.angleTo(moonDir);
+            const sunAng = Math.asin(THREE.MathUtils.clamp(sunRadius / sunDist, 0, 1));
+            let moonAng = Math.asin(THREE.MathUtils.clamp(moonRadius / moonDist, 0, 1));
+
+            if (currentConfig.id === 'solar_total' || currentConfig.id === 'solar_partial') {
+                moonAng = sunAng;
+            }
+
+            const solarOcc = diskOverlapRatio(sunAng, moonAng, sep);
+
+            const earthDirFromMoon = earthGroup.position.clone().sub(moonWorld).normalize();
+            const sunDirFromMoon = sunLight.position.clone().sub(moonWorld).normalize();
+            const lunarSep = sunDirFromMoon.angleTo(earthDirFromMoon);
+            const earthAng = Math.asin(THREE.MathUtils.clamp(earthRadius / moonDist, 0, 1));
+            const sunAngFromEarth = Math.asin(THREE.MathUtils.clamp(sunRadius / earthDist, 0, 1));
+            const umbraAng = Math.max(earthAng - sunAngFromEarth, 1e-5);
+            const lunarOcc = diskOverlapRatio(umbraAng, moonAng, lunarSep);
+
+            return { sunAltSin, moonAltSin, solarOcc, lunarOcc };
+        }
+
         function solveBestObserver(targetT = parseFloat(timelineEl.value)) {
             if (!currentConfig) return { lat: 0, lon: 0 };
             const oldT = parseFloat(timelineEl.value);
             updatePositions(targetT);
-            let best = { lat: 0, lon: 0, score: -999 };
-            for (let lat = -70; lat <= 70; lat += 10) {
-                for (let lon = -180; lon < 180; lon += 10) {
-                    const local = latLonToLocal(lat, lon, earthRadius);
-                    const obsWorld = earth.localToWorld(local.clone());
-                    const moonWorld = moonGroup.getWorldPosition(new THREE.Vector3());
-                    const up = obsWorld.clone().sub(earthGroup.position).normalize();
-                    
-                    const sunDir = sunLight.position.clone().sub(obsWorld).normalize();
-                    const moonDir = moonWorld.clone().sub(obsWorld).normalize();
-                    const sunAlt = sunDir.dot(up);
-                    const moonAlt = moonDir.dot(up);
-                    
-                    if (currentConfig.mode === 'solar') {
-                        if (sunAlt > 0) {
-                            const sep = sunDir.angleTo(moonDir);
-                            const score = sunAlt - sep * 5; 
-                            if (score > best.score) best = { lat, lon, score };
-                        }
-                    } else {
-                        if (moonAlt > 0) {
-                            const earthDir = earthGroup.position.clone().sub(moonWorld).normalize();
-                            const sep = sunLight.position.clone().sub(moonWorld).normalize().angleTo(earthDir);
-                            const score = moonAlt - sep * 5;
-                            if (score > best.score) best = { lat, lon, score };
-                        }
+
+            let best = { lat: 0, lon: 0, score: -Infinity };
+
+            function scoreAt(lat, lon) {
+                const m = getObserverMetrics(lat, lon);
+                if (currentConfig.mode === 'solar') {
+                    if (m.sunAltSin <= 0) return -Infinity;
+                    return m.solarOcc * 100 + m.sunAltSin * 0.1;
+                }
+                if (m.moonAltSin <= 0) return -Infinity;
+                return m.lunarOcc * 100 + m.moonAltSin * 0.1;
+            }
+
+            const passes = [
+                { latStep: 10, lonStep: 10, latRange: 70, lonRange: 180 },
+                { latStep: 2, lonStep: 2, latRange: 12, lonRange: 12 },
+                { latStep: 0.5, lonStep: 0.5, latRange: 3, lonRange: 3 }
+            ];
+
+            passes.forEach((pass, index) => {
+                const centerLat = index === 0 ? 0 : best.lat;
+                const centerLon = index === 0 ? 0 : best.lon;
+                const latMin = Math.max(-80, centerLat - pass.latRange);
+                const latMax = Math.min(80, centerLat + pass.latRange);
+                const lonMin = centerLon - pass.lonRange;
+                const lonMax = centerLon + pass.lonRange;
+
+                for (let lat = latMin; lat <= latMax + 1e-9; lat += pass.latStep) {
+                    for (let lonRaw = lonMin; lonRaw <= lonMax + 1e-9; lonRaw += pass.lonStep) {
+                        const lon = ((((lonRaw + 180) % 360) + 360) % 360) - 180;
+                        const score = scoreAt(lat, lon);
+                        if (score > best.score) best = { lat, lon, score };
                     }
                 }
-            }
+            });
+
             updatePositions(oldT);
             return best;
         }
