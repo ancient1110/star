@@ -40,6 +40,29 @@
             position: absolute; bottom: 15px; width: 100%; text-align: center;
             pointer-events: none; color: #aaa; font-size: 0.85rem; text-shadow: 1px 1px 2px #000;
         }
+
+        #observer-panel {
+            position: absolute; top: 15px; right: 15px;
+            width: 320px; background: rgba(18, 18, 26, 0.86);
+            border: 1px solid #445; border-radius: 10px;
+            padding: 14px; box-shadow: 0 4px 15px rgba(0,0,0,0.8);
+            backdrop-filter: blur(8px);
+        }
+        #observer-panel h2 { margin-top: 0; }
+        #observer-select {
+            width: 100%; margin-bottom: 10px; padding: 6px 8px;
+            color: #f5f7fa; background: #202330; border: 1px solid #566;
+            border-radius: 6px;
+        }
+        #observer-view {
+            width: 100%; aspect-ratio: 1 / 1;
+            background: radial-gradient(circle at 50% 50%, #081225 0%, #03060c 70%, #000 100%);
+            border: 1px solid #556; border-radius: 8px;
+        }
+        #observer-meta {
+            margin-top: 8px; font-size: 0.8rem; color: #d5dce6; line-height: 1.45;
+            background: rgba(0,0,0,0.4); border-radius: 6px; padding: 8px 10px;
+        }
     </style>
 </head>
 <body>
@@ -71,6 +94,13 @@
 
     <div id="instructions">
         🖱️ 左键旋转 | 🖱️ 滚轮缩放 | 🖱️ 右键平移 | 注意观察星球表面的**真实物理光影**变化
+    </div>
+
+    <div id="observer-panel">
+        <h2>📍 地球观测点 & 同步观测视窗</h2>
+        <select id="observer-select"></select>
+        <canvas id="observer-view" width="300" height="300"></canvas>
+        <div id="observer-meta">等待初始化观测点…</div>
     </div>
 
     <div id="canvas-container"></div>
@@ -291,6 +321,10 @@
         const _zAxis = new THREE.Vector3(0, 0, 1);
         const _tmpMoonToSun = new THREE.Vector3();
         const _tmpMoonToEarth = new THREE.Vector3();
+        const _tmpObserverWorld = new THREE.Vector3();
+        const _tmpObserverToSun = new THREE.Vector3();
+        const _tmpObserverToMoon = new THREE.Vector3();
+        const _tmpObserverToEarth = new THREE.Vector3();
 
         function diskOverlapRatio(rs, rm, d) {
             if (d >= rs + rm) return 0;
@@ -356,6 +390,227 @@
         let currentConfig = null;
         let timelineEl = document.getElementById('timeline');
         let autoplayEl = document.getElementById('autoplay');
+        const observerSelectEl = document.getElementById('observer-select');
+        const observerMetaEl = document.getElementById('observer-meta');
+        const observerCanvas = document.getElementById('observer-view');
+        const observerCtx = observerCanvas.getContext('2d');
+
+        const observerCandidates = [
+            { id: 'best', name: '🌟 食甚最佳观测点（固定观测）', autoBest: true },
+            { id: 'east_asia', name: '手动点：华东附近（31°N 121°E）', lat: 31, lon: 121 }
+        ];
+
+        let currentObserver = { lat: 0, lon: 0, label: '' };
+        const observerMarker = new THREE.Mesh(
+            new THREE.SphereGeometry(0.11, 12, 12),
+            new THREE.MeshBasicMaterial({ color: 0xff5757 })
+        );
+        earthGroup.add(observerMarker);
+
+        function latLonToLocal(latDeg, lonDeg, radius) {
+            const lat = THREE.MathUtils.degToRad(latDeg);
+            const lon = THREE.MathUtils.degToRad(lonDeg);
+            const x = radius * Math.cos(lat) * Math.cos(lon);
+            const y = radius * Math.sin(lat);
+            const z = radius * Math.cos(lat) * Math.sin(lon);
+            return new THREE.Vector3(x, y, z);
+        }
+
+        function angularRadius(radius, dist) {
+            if (dist <= radius) return Math.PI / 2;
+            return Math.asin(THREE.MathUtils.clamp(radius / dist, 0, 1));
+        }
+
+        function estimateOccultationForObserver(lat, lon, type) {
+            const earthPos = earthGroup.position.clone();
+            const observerLocal = latLonToLocal(lat, lon, earthRadius + 0.03);
+            const observerWorld = earthPos.clone().add(observerLocal);
+            const moonWorld = new THREE.Vector3();
+            moonGroup.getWorldPosition(moonWorld);
+
+            _tmpObserverToSun.subVectors(sunLight.position, observerWorld);
+            _tmpObserverToMoon.subVectors(moonWorld, observerWorld);
+            _tmpObserverToEarth.subVectors(earthPos, observerWorld);
+            const sunDist = _tmpObserverToSun.length();
+            const moonDist = _tmpObserverToMoon.length();
+            const earthDistToObs = _tmpObserverToEarth.length();
+
+            if (type.startsWith('solar')) {
+                const sep = _tmpObserverToSun.clone().normalize().angleTo(_tmpObserverToMoon.clone().normalize());
+                const sunAng = angularRadius(eclipseUniforms.sunRadius.value, sunDist);
+                const moonAng = angularRadius(moonRadius, moonDist);
+                return diskOverlapRatio(Math.max(sunAng, 1e-5), moonAng, sep);
+            }
+
+            const sep = _tmpObserverToMoon.clone().normalize().angleTo(_tmpObserverToEarth.clone().normalize());
+            const moonAng = angularRadius(moonRadius, moonDist);
+            const earthAng = angularRadius(earthRadius, earthDistToObs);
+            return diskOverlapRatio(Math.max(moonAng, 1e-5), earthAng, sep);
+        }
+
+        function solveBestObserverAtMaximum(type) {
+            if (!currentConfig) return { lat: 0, lon: 0 };
+            const oldT = parseFloat(timelineEl.value);
+            updatePositions(0);
+            let best = { lat: 0, lon: 0, score: -1 };
+            for (let lat = -70; lat <= 70; lat += 5) {
+                for (let lon = -180; lon < 180; lon += 5) {
+                    const earthPos = earthGroup.position.clone();
+                    const observerLocal = latLonToLocal(lat, lon, earthRadius + 0.03);
+                    const observerWorld = earthPos.clone().add(observerLocal);
+                    const moonWorld = new THREE.Vector3();
+                    moonGroup.getWorldPosition(moonWorld);
+
+                    const sunDir = new THREE.Vector3().subVectors(sunLight.position, observerWorld).normalize();
+                    const moonDir = new THREE.Vector3().subVectors(moonWorld, observerWorld).normalize();
+                    const observerUp = observerWorld.clone().sub(earthPos).normalize();
+                    const sunAlt = Math.asin(THREE.MathUtils.clamp(sunDir.dot(observerUp), -1, 1));
+                    const moonAlt = Math.asin(THREE.MathUtils.clamp(moonDir.dot(observerUp), -1, 1));
+                    const occ = estimateOccultationForObserver(lat, lon, type);
+
+                    const score = type.startsWith('solar')
+                        ? (sunAlt > 0 ? occ : -1)
+                        : (moonAlt > 0 ? moonAlt + occ * 0.2 : -1);
+                    if (score > best.score) best = { lat, lon, score };
+                }
+            }
+            updatePositions(oldT);
+            return best;
+        }
+
+        function refreshObserverMarker() {
+            const local = latLonToLocal(currentObserver.lat, currentObserver.lon, earthRadius + 0.13);
+            observerMarker.position.copy(local);
+        }
+
+        function drawObserverView(type) {
+            const w = observerCanvas.width;
+            const h = observerCanvas.height;
+            const cx = w / 2;
+            const cy = h / 2;
+            observerCtx.clearRect(0, 0, w, h);
+
+            observerCtx.fillStyle = '#02050c';
+            observerCtx.fillRect(0, 0, w, h);
+
+            const observerLocal = latLonToLocal(currentObserver.lat, currentObserver.lon, earthRadius + 0.03);
+            earthGroup.getWorldPosition(_tmpObserverWorld);
+            _tmpObserverWorld.add(observerLocal);
+
+            const moonWorld = new THREE.Vector3();
+            moonGroup.getWorldPosition(moonWorld);
+            _tmpObserverToSun.subVectors(sunLight.position, _tmpObserverWorld);
+            _tmpObserverToMoon.subVectors(moonWorld, _tmpObserverWorld);
+            _tmpObserverToEarth.subVectors(earthGroup.position, _tmpObserverWorld);
+
+            const sunDist = _tmpObserverToSun.length();
+            const moonDist = _tmpObserverToMoon.length();
+            const earthDistToObs = _tmpObserverToEarth.length();
+            const sepSunMoon = _tmpObserverToSun.clone().normalize().angleTo(_tmpObserverToMoon.clone().normalize());
+            const sepMoonEarth = _tmpObserverToMoon.clone().normalize().angleTo(_tmpObserverToEarth.clone().normalize());
+
+            const sunAng = angularRadius(eclipseUniforms.sunRadius.value, sunDist);
+            const moonAng = angularRadius(moonRadius, moonDist);
+            const earthAng = angularRadius(earthRadius, earthDistToObs);
+
+            const baseR = 58;
+            const sunR = THREE.MathUtils.clamp(baseR * (sunAng / 0.1), 14, 52);
+            const moonR = THREE.MathUtils.clamp(baseR * (moonAng / 0.1), 12, 50);
+            const earthWorld = earthGroup.position.clone();
+            const observerUp = _tmpObserverWorld.clone().sub(earthWorld).normalize();
+            const worldNorth = new THREE.Vector3(0, 1, 0);
+            const worldAltNorth = new THREE.Vector3(0, 0, 1);
+            let east = new THREE.Vector3().crossVectors(worldNorth, observerUp);
+            if (east.lengthSq() < 1e-6) east = new THREE.Vector3().crossVectors(worldAltNorth, observerUp);
+            east.normalize();
+            const north = new THREE.Vector3().crossVectors(observerUp, east).normalize();
+            const sunDir = _tmpObserverToSun.clone().normalize();
+            const moonDir = _tmpObserverToMoon.clone().normalize();
+            const sunAlt = Math.asin(THREE.MathUtils.clamp(sunDir.dot(observerUp), -1, 1));
+            const moonAlt = Math.asin(THREE.MathUtils.clamp(moonDir.dot(observerUp), -1, 1));
+            function getOffset(primaryDir, targetDir, scale = 185) {
+                const right = new THREE.Vector3().crossVectors(primaryDir, north).normalize();
+                const up = new THREE.Vector3().crossVectors(right, primaryDir).normalize();
+                const x = Math.atan2(targetDir.dot(right), targetDir.dot(primaryDir));
+                const y = Math.atan2(targetDir.dot(up), targetDir.dot(primaryDir));
+                return { x: x * scale, y: -y * scale };
+            }
+
+            const solarOcc = diskOverlapRatio(Math.max(sunAng, 1e-5), moonAng, sepSunMoon);
+            const lunarOcc = diskOverlapRatio(Math.max(moonAng, 1e-5), earthAng, sepMoonEarth);
+            const isSolarMode = type.startsWith('solar');
+            if (isSolarMode) {
+                if (sunAlt <= 0) {
+                    observerCtx.fillStyle = '#7f8ea3';
+                    observerCtx.font = '16px Microsoft YaHei';
+                    observerCtx.textAlign = 'center';
+                    observerCtx.fillText('该地点当前看不到太阳', cx, cy);
+                    observerMetaEl.innerHTML = `观测点：<strong>${currentObserver.label}</strong><br>纬度 ${currentObserver.lat.toFixed(1)}°，经度 ${currentObserver.lon.toFixed(1)}°<br>太阳高度：<strong>${THREE.MathUtils.radToDeg(sunAlt).toFixed(1)}°</strong><br>日食遮挡率：<strong>0.0%</strong>`;
+                    return;
+                }
+                observerCtx.beginPath();
+                observerCtx.fillStyle = '#ffd867';
+                observerCtx.arc(cx, cy, sunR, 0, Math.PI * 2);
+                observerCtx.fill();
+
+                if (moonAlt > 0) {
+                    const offset = getOffset(sunDir, moonDir);
+                    observerCtx.beginPath();
+                    observerCtx.fillStyle = '#1f2330';
+                    observerCtx.arc(cx + offset.x, cy + offset.y, Math.min(moonR, sunR * 1.08), 0, Math.PI * 2);
+                    observerCtx.fill();
+                }
+
+                observerMetaEl.innerHTML = `观测点：<strong>${currentObserver.label}</strong><br>纬度 ${currentObserver.lat.toFixed(1)}°，经度 ${currentObserver.lon.toFixed(1)}°<br>太阳高度：<strong>${THREE.MathUtils.radToDeg(sunAlt).toFixed(1)}°</strong>｜月亮高度：<strong>${THREE.MathUtils.radToDeg(moonAlt).toFixed(1)}°</strong><br>日食遮挡率：<strong>${(solarOcc * 100).toFixed(1)}%</strong>`;
+                return;
+            }
+
+            if (moonAlt <= 0) {
+                observerCtx.fillStyle = '#7f8ea3';
+                observerCtx.font = '16px Microsoft YaHei';
+                observerCtx.textAlign = 'center';
+                observerCtx.fillText('该地点当前看不到月亮', cx, cy);
+                observerMetaEl.innerHTML = `观测点：<strong>${currentObserver.label}</strong><br>纬度 ${currentObserver.lat.toFixed(1)}°，经度 ${currentObserver.lon.toFixed(1)}°<br>月亮高度：<strong>${THREE.MathUtils.radToDeg(moonAlt).toFixed(1)}°</strong><br>月食入影率：<strong>0.0%</strong>`;
+                return;
+            }
+
+            observerCtx.beginPath();
+            observerCtx.fillStyle = '#d8dce5';
+            observerCtx.arc(cx, cy, moonR, 0, Math.PI * 2);
+            observerCtx.fill();
+            // 月食时从地球任一可见地点观察到的“月面变暗比例”近似一致：用入影率直接控制明暗
+            observerCtx.save();
+            observerCtx.beginPath();
+            observerCtx.arc(cx, cy, moonR, 0, Math.PI * 2);
+            observerCtx.clip();
+            observerCtx.fillStyle = `rgba(12, 12, 22, ${THREE.MathUtils.clamp(0.12 + lunarOcc * 0.82, 0.12, 0.94)})`;
+            observerCtx.fillRect(cx - moonR - 2, cy - moonR - 2, moonR * 2 + 4, moonR * 2 + 4);
+            observerCtx.restore();
+
+            observerMetaEl.innerHTML = `观测点：<strong>${currentObserver.label}</strong><br>纬度 ${currentObserver.lat.toFixed(1)}°，经度 ${currentObserver.lon.toFixed(1)}°<br>太阳高度：<strong>${THREE.MathUtils.radToDeg(sunAlt).toFixed(1)}°</strong>｜月亮高度：<strong>${THREE.MathUtils.radToDeg(moonAlt).toFixed(1)}°</strong><br>月食入影率：<strong>${(lunarOcc * 100).toFixed(1)}%</strong>`;
+        }
+
+        function setupObserverOptions() {
+            observerSelectEl.innerHTML = observerCandidates
+                .map((pt) => `<option value="${pt.id}">${pt.name}</option>`)
+                .join('');
+            observerSelectEl.addEventListener('change', () => {
+                const selected = observerCandidates.find((pt) => pt.id === observerSelectEl.value);
+                if (!selected) return;
+                if (selected.autoBest) {
+                    const best = solveBestObserverAtMaximum(currentObserver.type || 'solar_total');
+                    currentObserver.lat = best.lat;
+                    currentObserver.lon = best.lon;
+                    currentObserver.label = '🌟 食甚最佳观测点（固定）';
+                } else {
+                    currentObserver.lat = selected.lat;
+                    currentObserver.lon = selected.lon;
+                    currentObserver.label = selected.name;
+                }
+                refreshObserverMarker();
+            });
+            observerSelectEl.value = 'best';
+        }
 
         window.setEclipse = function(type) {
             document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
@@ -382,6 +637,13 @@
             } else {
                 camera.position.set(earthDist + 22, 5, 20);
             }
+
+            currentObserver.type = type;
+            const best = solveBestObserverAtMaximum(type);
+            currentObserver.lat = best.lat;
+            currentObserver.lon = best.lon;
+            currentObserver.label = '🌟 食甚最佳观测点（固定）';
+            refreshObserverMarker();
         };
 
         // ================= 5. 位置推演与阴影追踪 =================
@@ -461,10 +723,12 @@
             }
 
             updatePositions(t);
+            if (currentConfig) drawObserverView(currentObserver.type || 'solar_total');
             controls.update();
             renderer.render(scene, camera);
         }
 
+        setupObserverOptions();
         setEclipse('solar_total');
         animate();
 
