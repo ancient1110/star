@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>3D 日月食 真实物理光影动态推演 (1:1完美日冕版)</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050508; color: white; font-family: 'Microsoft YaHei', sans-serif; }
+        #canvas-container { width: 100vw; height: 100vh; display: block; }
+        
+        #ui-panel {
+            position: absolute; top: 15px; left: 15px;
+            background: rgba(20, 20, 30, 0.85); padding: 18px;
+            border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.8);
+            border: 1px solid #445; width: 320px; backdrop-filter: blur(8px);
+        }
+
+        h1 { font-size: 1.15rem; margin-top: 0; color: #4da8da; border-bottom: 1px solid #555; padding-bottom: 10px; }
+        h2 { font-size: 0.95rem; color: #f2c94c; margin: 12px 0 6px 0; }
+        
+        button {
+            background: #2a2a35; color: #fff; border: 1px solid #555;
+            padding: 6px 0; margin: 3px 1%; border-radius: 4px;
+            cursor: pointer; transition: all 0.2s; font-size: 0.85rem; width: 47%;
+            display: inline-block;
+        }
+        button:hover { background: #4da8da; }
+        button.active { background: #e74c3c; border-color: #e74c3c; font-weight: bold; }
+        .btn-full { width: 97%; }
+
+        #timeline-container { margin-top: 15px; padding-top: 15px; border-top: 1px solid #555; }
+        #timeline { width: 100%; cursor: pointer; accent-color: #e74c3c; }
+        .time-labels { display: flex; justify-content: space-between; font-size: 0.75rem; color: #aaa; margin-top: 2px; }
+        
+        #info-box {
+            margin-top: 15px; font-size: 0.85rem; line-height: 1.5; color: #eee;
+            background: rgba(0,0,0,0.6); padding: 12px; border-radius: 6px; border-left: 4px solid #4da8da;
+        }
+
+        #instructions {
+            position: absolute; bottom: 15px; width: 100%; text-align: center;
+            pointer-events: none; color: #aaa; font-size: 0.85rem; text-shadow: 1px 1px 2px #000;
+        }
+
+        #observer-panel {
+            position: absolute; top: 15px; right: 15px;
+            width: 320px; background: rgba(18, 18, 26, 0.86);
+            border: 1px solid #445; border-radius: 10px;
+            padding: 14px; box-shadow: 0 4px 15px rgba(0,0,0,0.8);
+            backdrop-filter: blur(8px);
+        }
+        #observer-panel h2 { margin-top: 0; margin-bottom: 12px; font-size: 1.05rem;}
+        #observer-view {
+            width: 100%; aspect-ratio: 1 / 1;
+            background: #02050c; /* 固定纯净深空背景 */
+            border: 1px solid #556; border-radius: 8px;
+        }
+        #observer-meta {
+            margin-top: 8px; font-size: 0.8rem; color: #d5dce6; line-height: 1.45;
+            background: rgba(0,0,0,0.4); border-radius: 6px; padding: 8px 10px;
+        }
+        .observer-tag {
+            color: #f2c94c; font-weight: bold; font-size: 0.85rem; margin-bottom: 8px; display: block;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-panel">
+        <h1>日月食物理光影推演</h1>
+        
+        <h2>☀️ 日食 (新月时分)</h2>
+        <button onclick="setEclipse('solar_total')" id="btn_solar_total">日全食</button>
+        <button onclick="setEclipse('solar_annular')" id="btn_solar_annular">日环食</button>
+        <button onclick="setEclipse('solar_partial')" id="btn_solar_partial" class="btn-full">日偏食</button>
+
+        <h2>🌕 月食 (满月时分)</h2>
+        <button onclick="setEclipse('lunar_total')" id="btn_lunar_total">月全食</button>
+        <button onclick="setEclipse('lunar_partial')" id="btn_lunar_partial">月偏食</button>
+        <button onclick="setEclipse('lunar_penumbral')" id="btn_lunar_penumbral" class="btn-full">半影月食</button>
+
+        <div id="timeline-container">
+            <div style="font-size:0.85rem; margin-bottom:5px; color:#f2c94c;">推演时间轴：</div>
+            <input type="range" id="timeline" min="-1" max="1" step="any" value="-1">
+            <div class="time-labels"><span>前</span><span>食甚</span><span>后</span></div>
+            <label style="font-size:0.85rem; display:flex; align-items:center; margin-top:10px; cursor:pointer;">
+                <input type="checkbox" id="autoplay" checked style="margin-right:5px;"> 自动播放
+            </label>
+        </div>
+
+        <div id="info-box">请选择类型</div>
+    </div>
+
+    <div id="instructions">
+        🖱️ 左键旋转 | 🖱️ 滚轮缩放 | 🖱️ 右键平移 | 已锁定日全食与偏食视直径1:1还原完美日冕
+    </div>
+
+    <div id="observer-panel">
+        <h2>📍 同步观测视窗</h2>
+        <span class="observer-tag">🌟 当前位置：食甚最佳观测点</span>
+        <canvas id="observer-view" width="300" height="300"></canvas>
+        <div id="observer-meta">等待初始化观测点…</div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // 【重置物理半径】将月球物理半径彻底缩小至 0.75，不仅让3D视角更精巧
+        // 更使计算得到的原生物理视差与太阳达成近乎 1:1 的完美相切
+        const sunRadius = 12.0;
+        const earthDist = 120.0;
+        const earthRadius = 3.0;
+        const moonRadius = 0.75; 
+
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 2000);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = false; 
+        container.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        scene.add(new THREE.AmbientLight(0x151520)); 
+
+        const sunLight = new THREE.PointLight(0xffffff, 4.5, 0, 0);
+        scene.add(sunLight);
+
+        const sun = new THREE.Mesh(
+            new THREE.SphereGeometry(sunRadius, 32, 32),
+            new THREE.MeshBasicMaterial({ color: 0xffe877 })
+        );
+        scene.add(sun);
+        const glow = new THREE.Mesh(
+            new THREE.SphereGeometry(sunRadius * 1.25, 32, 32),
+            new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending })
+        );
+        sun.add(glow);
+
+        const earthGroup = new THREE.Group(); 
+        scene.add(earthGroup);
+
+        const earthOrbitLine = new THREE.LineLoop(
+            new THREE.BufferGeometry().setFromPoints(new THREE.Path().absarc(0,0,earthDist,0,Math.PI*2).getPoints(128)),
+            new THREE.LineBasicMaterial({ color: 0x555555, transparent: true, opacity: 0.5 })
+        );
+        earthOrbitLine.rotation.x = Math.PI / 2;
+        scene.add(earthOrbitLine);
+
+        function createShadowCone(baseRadius, endRadius, length, isUmbra) {
+            const geo = new THREE.CylinderGeometry(endRadius, baseRadius, length, 64, 1, true);
+            geo.rotateX(Math.PI / 2);
+            geo.translate(0, 0, length / 2);
+            const mat = new THREE.MeshBasicMaterial({
+                color: isUmbra ? 0x000000 : 0xaaaaaa,
+                transparent: true,
+                opacity: isUmbra ? 0.6 : 0.12,
+                side: THREE.DoubleSide,
+                depthWrite: false
+            });
+            return new THREE.Mesh(geo, mat);
+        }
+
+        // 【重算本影锥长度】通过 L = D * (Rm / (Rs - Rm)) 严格计算得出本影长度应为 8.0
+        const moonUmbra = createShadowCone(moonRadius, 0.01, 8.0, true);
+        const moonPenumbra = createShadowCone(moonRadius, 4.5, 25, false);
+        scene.add(moonUmbra); scene.add(moonPenumbra);
+
+        const earthUmbra = createShadowCone(earthRadius, 0.01, 40, true);
+        const earthPenumbra = createShadowCone(earthRadius, 10, 45, false);
+        scene.add(earthUmbra); scene.add(earthPenumbra);
+
+        const _zAxis = new THREE.Vector3(0, 0, 1);
+        function syncShadowCone(cone, casterPos) {
+            const toSun = new THREE.Vector3().subVectors(casterPos, sunLight.position);
+            if (toSun.lengthSq() < 1e-6) return;
+            const dir = toSun.normalize();
+            cone.quaternion.setFromUnitVectors(_zAxis, dir);
+            cone.position.copy(casterPos);
+        }
+
+        const shaderMathStr = `
+ float diskOverlapRatio(float rs, float rm, float d) {
+     float pi = 3.141592653589793;
+     if (d >= rs + rm) return 0.0;
+     if (d <= abs(rs - rm)) {
+         float minR = min(rs, rm);
+         return (minR * minR) / (rs * rs);
+     }
+     float rs2 = rs * rs; float rm2 = rm * rm;
+     float alpha = acos(clamp((d * d + rs2 - rm2) / (2.0 * d * rs), -1.0, 1.0));
+     float beta = acos(clamp((d * d + rm2 - rs2) / (2.0 * d * rm), -1.0, 1.0));
+     float area = rs2 * alpha + rm2 * beta - 0.5 * sqrt(max(0.0, (-d + rs + rm) * (d + rs - rm) * (d - rs + rm) * (d + rs + rm)));
+     return clamp(area / (pi * rs2), 0.0, 1.0);
+ }
+ `;
+
+        const earthMaterial = new THREE.MeshPhongMaterial({ color: 0x3399ff, specular: 0x222222, shininess: 15 });
+        const eclipseUniforms = {
+            sunWorldPos: { value: new THREE.Vector3() },
+            moonWorldPos: { value: new THREE.Vector3() },
+            earthWorldPos: { value: new THREE.Vector3() }
+        };
+
+        earthMaterial.onBeforeCompile = (shader) => {
+            shader.uniforms.sunWorldPos = eclipseUniforms.sunWorldPos;
+            shader.uniforms.moonWorldPos = eclipseUniforms.moonWorldPos;
+            
+            shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>\nvarying vec3 vWorldPos;`);
+            shader.vertexShader = shader.vertexShader.replace('#include <worldpos_vertex>', `#include <worldpos_vertex>\nvWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;`);
+
+            shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>\nvarying vec3 vWorldPos;\nuniform vec3 sunWorldPos;\nuniform vec3 moonWorldPos;\n` + shaderMathStr);
+            shader.fragmentShader = shader.fragmentShader.replace('#include <dithering_fragment>', `
+ vec3 toSun = sunWorldPos - vWorldPos;
+ vec3 toMoon = moonWorldPos - vWorldPos;
+ float distSun = length(toSun); float distMoon = length(toMoon);
+ float eclipse = 0.0;
+ 
+ if (distSun > ${sunRadius.toFixed(2)} && distMoon > ${moonRadius.toFixed(2)}) {
+     float sep = acos(clamp(dot(normalize(toSun), normalize(toMoon)), -1.0, 1.0));
+     float sunAng = asin(clamp(${sunRadius.toFixed(2)} / distSun, 0.0, 1.0));
+     float moonAng = asin(clamp(${moonRadius.toFixed(2)} / distMoon, 0.0, 1.0));
+     
+     float rawOcc = diskOverlapRatio(sunAng, moonAng, sep);
+     eclipse = pow(rawOcc, 0.7);
+ }
+ outgoingLight *= (1.0 - clamp(eclipse, 0.0, 1.0));
+ #include <dithering_fragment>`);
+        };
+        const earth = new THREE.Mesh(new THREE.SphereGeometry(earthRadius, 64, 64), earthMaterial);
+        earthGroup.add(earth);
+
+        const moonOrbitTiltGroup = new THREE.Group(); 
+        earthGroup.add(moonOrbitTiltGroup);
+        const moonGroup = new THREE.Group(); 
+        moonOrbitTiltGroup.add(moonGroup);
+        
+        let moonOrbitLine;
+        function updateMoonOrbit(radius) {
+            if(moonOrbitLine) moonOrbitTiltGroup.remove(moonOrbitLine);
+            moonOrbitLine = new THREE.LineLoop(
+                new THREE.BufferGeometry().setFromPoints(new THREE.Path().absarc(0,0,radius,0,Math.PI*2).getPoints(64)),
+                new THREE.LineBasicMaterial({ color: 0x888888 })
+            );
+            moonOrbitLine.rotation.x = Math.PI / 2;
+            moonOrbitTiltGroup.add(moonOrbitLine);
+        }
+
+        const moonMaterial = new THREE.MeshPhongMaterial({ color: 0xced4df, specular: 0x222222, shininess: 10 });
+        
+        moonMaterial.onBeforeCompile = (shader) => {
+            shader.uniforms.sunWorldPos = eclipseUniforms.sunWorldPos;
+            shader.uniforms.earthWorldPos = eclipseUniforms.earthWorldPos;
+
+            shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>\nvarying vec3 vWorldPos;\nvarying vec3 vNorm;`);
+            shader.vertexShader = shader.vertexShader.replace('#include <worldpos_vertex>', `#include <worldpos_vertex>\nvWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;\nvNorm = normalize((modelMatrix * vec4(normal, 0.0)).xyz);`);
+
+            shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>\nvarying vec3 vWorldPos;\nvarying vec3 vNorm;\nuniform vec3 sunWorldPos;\nuniform vec3 earthWorldPos;\n` + shaderMathStr);
+            shader.fragmentShader = shader.fragmentShader.replace('#include <dithering_fragment>', `
+ vec3 toSun = sunWorldPos - vWorldPos;
+ vec3 toEarth = earthWorldPos - vWorldPos;
+ float distSun = length(toSun); float distEarth = length(toEarth);
+ 
+ float lunarOcc = 0.0;
+ if (distSun > ${sunRadius.toFixed(2)} && distEarth > ${earthRadius.toFixed(2)}) {
+     float sep = acos(clamp(dot(normalize(toSun), normalize(toEarth)), -1.0, 1.0));
+     float sunAng = asin(clamp(${sunRadius.toFixed(2)} / distSun, 0.0, 1.0));
+     float earthAng = asin(clamp(${earthRadius.toFixed(2)} / distEarth, 0.0, 1.0));
+     lunarOcc = diskOverlapRatio(sunAng, earthAng, sep);
+ }
+ 
+ float dimFactor = 1.0 - clamp(lunarOcc, 0.0, 1.0);
+ float bloodIntensity = smoothstep(0.9, 1.0, lunarOcc);
+ float sunFace = max(dot(vNorm, normalize(toSun)), 0.0);
+ vec3 bloodColor = vec3(0.7, 0.15, 0.08) * sunFace * 0.8;
+ 
+ outgoingLight = (outgoingLight * dimFactor) + (bloodColor * bloodIntensity);
+ #include <dithering_fragment>`);
+        };
+
+        const moon = new THREE.Mesh(new THREE.SphereGeometry(moonRadius, 32, 32), moonMaterial);
+        moonGroup.add(moon);
+
+        function diskOverlapRatio(rs, rm, d) {
+            if (d >= rs + rm) return 0;
+            if (d <= Math.abs(rs - rm)) return (Math.min(rs, rm) ** 2) / (rs ** 2);
+            const alpha = Math.acos(THREE.MathUtils.clamp((d*d + rs*rs - rm*rm)/(2*d*rs), -1, 1));
+            const beta = Math.acos(THREE.MathUtils.clamp((d*d + rm*rm - rs*rs)/(2*d*rm), -1, 1));
+            const area = rs*rs*alpha + rm*rm*beta - 0.5 * Math.sqrt(Math.max(0, (-d+rs+rm)*(d+rs-rm)*(d-rs+rm)*(d+rs+rm)));
+            return THREE.MathUtils.clamp(area / (Math.PI * rs*rs), 0, 1);
+        }
+
+        // 【配合本影长度重设距离参数】使锥尖精确表现击中地表或空中悬空的状态
+        const eclipseData = {
+            'solar_total': {
+                id: 'solar_total',
+                title: "日全食 (完美日冕)", desc: "本影长8.0，此时月地距离10.0，锥尖深深切入地表。观测者将欣赏到被1:1完美覆盖后的极致日冕。",
+                baseAngle: Math.PI, radius: 10.0, tiltZ: 0, mode: 'solar'
+            },
+            'solar_annular': {
+                id: 'solar_annular',
+                title: "日环食 (金环悬空)", desc: "月球稍远至距离12.0。本影锥尖端在半空结束，地表之上留下一道璀璨的金环。",
+                baseAngle: Math.PI, radius: 12.0, tiltZ: 0, mode: 'solar'
+            },
+            'solar_partial': {
+                id: 'solar_partial',
+                title: "日偏食 (广阔的半影区)", desc: "轨道微斜，仅有灰色的半影区掠过。视角锁定下将看到纯粹的遮蔽剥夺。",
+                baseAngle: Math.PI, radius: 10.5, tiltZ: 0.12, mode: 'solar'
+            },
+            'lunar_total': {
+                id: 'lunar_total',
+                title: "月全食 (壮丽的血月)", desc: "月球彻底陷入地球中央黑色的本影光锥中，只有大气的折射红光能抵达月面，形成血月。",
+                baseAngle: 0, radius: 11.5, tiltZ: 0, mode: 'lunar'
+            },
+            'lunar_partial': {
+                id: 'lunar_partial',
+                title: "月偏食 (黑白分明)", desc: "月面仅部分切入本影。一半处于半影的灰暗白光中，一半深埋在本影区的暗红中。",
+                baseAngle: 0, radius: 11.5, tiltZ: 0.15, mode: 'lunar'
+            },
+            'lunar_penumbral': {
+                id: 'lunar_penumbral',
+                title: "半影月食 (淡影擦肩)", desc: "月球完美绕开了深红色的本影区，仅仅从浅灰色的半影中穿过，肉眼极难察觉。",
+                baseAngle: 0, radius: 11.5, tiltZ: 0.36, mode: 'lunar'
+            }
+        };
+
+        let currentConfig = null;
+        let timelineEl = document.getElementById('timeline');
+        let autoplayEl = document.getElementById('autoplay');
+        const observerMetaEl = document.getElementById('observer-meta');
+        const observerCanvas = document.getElementById('observer-view');
+        const observerCtx = observerCanvas.getContext('2d');
+        let currentObserver = { lat: 0, lon: 0 };
+        
+        const observerMarker = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 12), new THREE.MeshBasicMaterial({ color: 0xff3333 }));
+        earthGroup.add(observerMarker);
+
+        function latLonToLocal(latDeg, lonDeg, radius) {
+            const lat = THREE.MathUtils.degToRad(latDeg);
+            const lon = THREE.MathUtils.degToRad(lonDeg);
+            return new THREE.Vector3(radius * Math.cos(lat) * Math.cos(lon), radius * Math.sin(lat), radius * Math.cos(lat) * Math.sin(lon));
+        }
+
+        function solveBestObserver() {
+            if (!currentConfig) return { lat: 0, lon: 0 };
+            const oldT = parseFloat(timelineEl.value); updatePositions(0);
+            let best = { lat: 0, lon: 0, score: -999 };
+            for (let lat = -70; lat <= 70; lat += 10) {
+                for (let lon = -180; lon < 180; lon += 10) {
+                    const local = latLonToLocal(lat, lon, earthRadius);
+                    const obsWorld = earthGroup.position.clone().add(local);
+                    const moonWorld = moonGroup.getWorldPosition(new THREE.Vector3());
+                    const up = obsWorld.clone().sub(earthGroup.position).normalize();
+                    
+                    const sunDir = sunLight.position.clone().sub(obsWorld).normalize();
+                    const moonDir = moonWorld.clone().sub(obsWorld).normalize();
+                    const sunAlt = sunDir.dot(up);
+                    const moonAlt = moonDir.dot(up);
+                    
+                    if (currentConfig.mode === 'solar') {
+                        if (sunAlt > 0) {
+                            const sep = sunDir.angleTo(moonDir);
+                            const score = sunAlt - sep * 5; 
+                            if (score > best.score) best = { lat, lon, score };
+                        }
+                    } else {
+                        if (moonAlt > 0) {
+                            const earthDir = earthGroup.position.clone().sub(moonWorld).normalize();
+                            const sep = sunLight.position.clone().sub(moonWorld).normalize().angleTo(earthDir);
+                            const score = moonAlt - sep * 5;
+                            if (score > best.score) best = { lat, lon, score };
+                        }
+                    }
+                }
+            }
+            updatePositions(oldT);
+            return best;
+        }
+
+        function drawObserverView() {
+            if (!currentConfig) return;
+            const w = observerCanvas.width, h = observerCanvas.height, cx = w/2, cy = h/2;
+            
+            // 【背景还原】全程保持纯净的深空底色
+            observerCtx.clearRect(0, 0, w, h);
+            observerCtx.fillStyle = '#02050c';
+            observerCtx.fillRect(0, 0, w, h);
+
+            const obsLocal = latLonToLocal(currentObserver.lat, currentObserver.lon, earthRadius);
+            const obsWorld = earthGroup.position.clone().add(obsLocal);
+            const moonWorld = moonGroup.getWorldPosition(new THREE.Vector3());
+            
+            const toSun = sunLight.position.clone().sub(obsWorld);
+            const toMoon = moonWorld.clone().sub(obsWorld);
+            
+            const sunDist = toSun.length(); const moonDist = toMoon.length();
+            const sunDir = toSun.normalize(); const moonDir = toMoon.normalize();
+            
+            const up = obsWorld.clone().sub(earthGroup.position).normalize();
+            const sunAlt = Math.asin(THREE.MathUtils.clamp(sunDir.dot(up), -1, 1));
+            const moonAlt = Math.asin(THREE.MathUtils.clamp(moonDir.dot(up), -1, 1));
+
+            function getScreenOffsetFixed(primaryDir, targetDir, pixelScale, targetAngle) {
+                let globalUp = new THREE.Vector3(0, 1, 0);
+                let right = new THREE.Vector3().crossVectors(primaryDir, globalUp);
+                if (right.lengthSq() < 1e-6) right = new THREE.Vector3().crossVectors(primaryDir, new THREE.Vector3(0,0,1));
+                right.normalize();
+                let viewUp = new THREE.Vector3().crossVectors(right, primaryDir).normalize();
+                
+                let xProj = targetDir.dot(right);
+                let yProj = targetDir.dot(viewUp);
+                let len = Math.sqrt(xProj*xProj + yProj*yProj);
+                
+                if(len > 1e-6) return { x: (xProj/len) * targetAngle * pixelScale, y: -(yProj/len) * targetAngle * pixelScale };
+                return { x:0, y:0 };
+            }
+
+            const baseR = 50; 
+            
+            if (currentConfig.mode === 'solar') {
+                if (sunAlt <= 0) {
+                    observerCtx.fillStyle = '#aaa'; observerCtx.textAlign = 'center'; observerCtx.fillText('此地当前夜晚无阳光', cx, cy); return;
+                }
+                const sunAng = Math.asin(sunRadius / sunDist);
+                let moonAng = Math.asin(moonRadius / moonDist);
+                
+                // 【绝杀修正】强行锁死全食和偏食视角的月球视直径，让其与太阳精确 1:1 相等
+                if (currentConfig.id === 'solar_total' || currentConfig.id === 'solar_partial') {
+                    moonAng = sunAng; 
+                }
+
+                const scale = baseR / sunAng;
+                const moonR = moonAng * scale;
+                const sep = sunDir.angleTo(moonDir);
+                
+                const solarOcc = diskOverlapRatio(sunAng, moonAng, sep);
+
+                // 绘制日冕 (全食特效)
+                if (solarOcc > 0.8) {
+                    const coronaStrength = Math.pow((solarOcc - 0.8) / 0.2, 2); 
+                    const maxCoronaRadius = baseR * (1.5 + 2.0 * coronaStrength);
+                    
+                    // 日冕内圈从 0.9 倍开始，让覆盖上去的黑影边缘形成绝美的光晕
+                    let grdCorona = observerCtx.createRadialGradient(cx, cy, baseR * 0.9, cx, cy, maxCoronaRadius);
+                    grdCorona.addColorStop(0, `rgba(255, 255, 255, ${0.9 * coronaStrength})`);
+                    grdCorona.addColorStop(0.3, `rgba(200, 230, 255, ${0.4 * coronaStrength})`);
+                    grdCorona.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                    
+                    observerCtx.fillStyle = grdCorona;
+                    observerCtx.beginPath(); observerCtx.arc(cx, cy, maxCoronaRadius, 0, Math.PI*2); observerCtx.fill();
+                }
+
+                // 绘制太阳主体
+                observerCtx.beginPath(); observerCtx.fillStyle = '#ffd867';
+                observerCtx.arc(cx, cy, baseR, 0, Math.PI*2); observerCtx.fill();
+
+                // 绘制月亮黑影
+                let offset = {x:0, y:0};
+                if (moonAlt > 0) {
+                    offset = getScreenOffsetFixed(sunDir, moonDir, scale, sep);
+                    observerCtx.beginPath(); 
+                    // 【绝杀修正】使用与宇宙背景一模一样的纯色，使得日全食时黑边完全隐形融入深空
+                    observerCtx.fillStyle = '#02050c'; 
+                    observerCtx.arc(cx + offset.x, cy + offset.y, moonR, 0, Math.PI*2); observerCtx.fill();
+                }
+
+                // 绘制钻石环 / 贝利珠特效 
+                if (solarOcc > 0.95 && solarOcc < 0.999) {
+                    const distToCenter = Math.sqrt(offset.x**2 + offset.y**2);
+                    if (distToCenter > 0.001) {
+                        let dirX = offset.x / distToCenter;
+                        let dirY = offset.y / distToCenter;
+                        let ringX = cx - dirX * baseR;
+                        let ringY = cy - dirY * baseR;
+                        
+                        let flareIntensity = Math.sin((solarOcc - 0.95) / 0.049 * Math.PI);
+                        
+                        let ringGrd = observerCtx.createRadialGradient(ringX, ringY, 0, ringX, ringY, baseR * 1.5);
+                        ringGrd.addColorStop(0, `rgba(255, 255, 255, ${flareIntensity})`);
+                        ringGrd.addColorStop(0.1, `rgba(255, 255, 200, ${flareIntensity * 0.8})`);
+                        ringGrd.addColorStop(1, `rgba(255, 255, 255, 0)`);
+                        
+                        observerCtx.fillStyle = ringGrd;
+                        observerCtx.beginPath(); observerCtx.arc(ringX, ringY, baseR * 1.5, 0, Math.PI*2); observerCtx.fill();
+                    }
+                }
+
+                observerMetaEl.innerHTML = `日食遮挡率：<strong>${(solarOcc * 100).toFixed(1)}%</strong>`;
+
+            } else {
+                if (moonAlt <= 0) {
+                    observerCtx.fillStyle = '#aaa'; observerCtx.textAlign = 'center'; observerCtx.fillText('此地当前白天看不见月亮', cx, cy); return;
+                }
+                const moonAng = Math.asin(moonRadius / moonDist);
+                const scale = baseR / moonAng;
+                
+                const shadowDir = sunDir.clone().negate(); 
+                const sep = moonDir.angleTo(shadowDir);
+                const earthAng = Math.asin(earthRadius / moonDist);
+                const sunAngFromEarth = Math.asin(sunRadius / earthDist);
+                
+                const umbraAng = Math.max(earthAng - sunAngFromEarth, 1e-5);
+                const penumbraAng = earthAng + sunAngFromEarth;
+                
+                const umbraR = umbraAng * scale;
+                const penumbraR = penumbraAng * scale;
+                
+                const offset = getScreenOffsetFixed(moonDir, shadowDir, scale, sep);
+                const lunarOcc = diskOverlapRatio(umbraAng, moonAng, sep);
+
+                observerCtx.beginPath(); observerCtx.fillStyle = '#d8dce5';
+                observerCtx.arc(cx, cy, baseR, 0, Math.PI*2); observerCtx.fill();
+
+                observerCtx.save();
+                observerCtx.beginPath(); observerCtx.arc(cx, cy, baseR, 0, Math.PI*2); observerCtx.clip();
+                
+                observerCtx.beginPath(); observerCtx.arc(cx + offset.x, cy + offset.y, penumbraR, 0, Math.PI*2);
+                observerCtx.fillStyle = 'rgba(20, 20, 25, 0.6)'; observerCtx.fill();
+                
+                observerCtx.beginPath(); observerCtx.arc(cx + offset.x, cy + offset.y, umbraR, 0, Math.PI*2);
+                observerCtx.fillStyle = 'rgba(100, 25, 10, 0.9)'; observerCtx.fill();
+                observerCtx.restore();
+                
+                observerMetaEl.innerHTML = `地球本影切入率：<strong>${(lunarOcc * 100).toFixed(1)}%</strong>`;
+            }
+        }
+
+        window.setEclipse = function(type) {
+            document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+            document.getElementById('btn_' + type).classList.add('active');
+            currentConfig = eclipseData[type];
+            document.getElementById('info-box').innerHTML = `<strong>${currentConfig.title}</strong><br><br>${currentConfig.desc}`;
+            
+            moonUmbra.visible = currentConfig.mode === 'solar';
+            moonPenumbra.visible = currentConfig.mode === 'solar';
+            earthUmbra.visible = currentConfig.mode === 'lunar';
+            earthPenumbra.visible = currentConfig.mode === 'lunar';
+
+            updateMoonOrbit(currentConfig.radius);
+            moonOrbitTiltGroup.rotation.z = currentConfig.tiltZ;
+            timelineEl.value = -1;
+            
+            if(currentConfig.mode === 'solar') {
+                camera.position.set(earthDist + 15, 8, 15);
+                controls.target.copy(earthGroup.position);
+            } else {
+                camera.position.set(earthDist + 22, 5, 15);
+            }
+
+            const best = solveBestObserver();
+            currentObserver.lat = best.lat; currentObserver.lon = best.lon;
+            observerMarker.position.copy(latLonToLocal(currentObserver.lat, currentObserver.lon, earthRadius + 0.1));
+        };
+
+        function updatePositions(t) {
+            if(!currentConfig) return;
+            
+            const earthAngle = t * 0.08; 
+            earthGroup.position.set(Math.cos(earthAngle) * earthDist, 0, Math.sin(earthAngle) * earthDist);
+
+            const moonAngle = currentConfig.baseAngle + (t * 0.58);
+            moonGroup.position.set(Math.cos(moonAngle) * currentConfig.radius, 0, Math.sin(moonAngle) * currentConfig.radius);
+            
+            earth.rotation.y = t * 8; moon.rotation.y = moonAngle; 
+
+            eclipseUniforms.sunWorldPos.value.copy(sunLight.position);
+            eclipseUniforms.earthWorldPos.value.copy(earthGroup.position);
+            moonGroup.getWorldPosition(eclipseUniforms.moonWorldPos.value);
+
+            const moonWorld = eclipseUniforms.moonWorldPos.value;
+            syncShadowCone(moonUmbra, moonWorld);
+            syncShadowCone(moonPenumbra, moonWorld);
+            syncShadowCone(earthUmbra, earthGroup.position);
+            syncShadowCone(earthPenumbra, earthGroup.position);
+
+            if(currentConfig.mode === 'lunar') { controls.target.copy(eclipseUniforms.moonWorldPos.value); }
+            else { controls.target.copy(earthGroup.position); }
+        }
+
+        timelineEl.addEventListener('input', () => { autoplayEl.checked = false; });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            let t = parseFloat(timelineEl.value);
+            if (autoplayEl.checked) {
+                t += 0.002;
+                if (t > 1) t = -1; 
+                timelineEl.value = t;
+            }
+            updatePositions(t);
+            drawObserverView();
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        setEclipse('solar_total');
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
