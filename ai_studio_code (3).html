@@ -345,6 +345,7 @@
         const observerCanvas = document.getElementById('observer-view');
         const observerCtx = observerCanvas.getContext('2d');
         let currentObserver = { lat: 0, lon: 0 };
+        let lastObserverSyncT = null;
         
         const observerMarker = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 12), new THREE.MeshBasicMaterial({ color: 0xff3333 }));
         earth.add(observerMarker);
@@ -569,8 +570,9 @@
                 camera.position.set(earthDist + 22, 5, 15);
             }
 
-            // 观测点固定在食甚（时间轴中点）对应的最佳位置，避免播放时持续漂移
+            // 初始时先对齐食甚中点，后续再随时间轴同步更新观测点
             updateObserverAnchor(0);
+            lastObserverSyncT = 0;
         };
 
         function updatePositions(t) {
@@ -600,6 +602,9 @@
 
         timelineEl.addEventListener('input', () => {
             autoplayEl.checked = false;
+            const t = parseFloat(timelineEl.value);
+            updateObserverAnchor(t);
+            lastObserverSyncT = t;
         });
 
         function animate() {
@@ -609,6 +614,10 @@
                 t += 0.002;
                 if (t > 1) t = -1; 
                 timelineEl.value = t;
+            }
+            if (lastObserverSyncT === null || Math.abs(t - lastObserverSyncT) > 1e-6) {
+                updateObserverAnchor(t);
+                lastObserverSyncT = t;
             }
             updatePositions(t);
             drawObserverView();
