@@ -152,6 +152,15 @@
             shader.uniforms.moonRadius = eclipseUniforms.moonRadius;
             shader.uniforms.eclipseStrength = eclipseUniforms.eclipseStrength;
 
+            const hasVertexHooks = shader.vertexShader.includes('#include <common>') && shader.vertexShader.includes('#include <worldpos_vertex>');
+            const hasFragmentHooks = shader.fragmentShader.includes('#include <common>') && shader.fragmentShader.includes('#include <dithering_fragment>');
+
+            // 避免合并冲突或 three 版本差异导致注入失败后整页“无反应”
+            if (!hasVertexHooks || !hasFragmentHooks) {
+                console.warn('Eclipse shader patch skipped: expected shader hooks not found.');
+                return;
+            }
+
             shader.vertexShader = shader.vertexShader.replace(
                 '#include <common>',
                 `#include <common>
