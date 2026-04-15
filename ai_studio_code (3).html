@@ -80,7 +80,7 @@
 
         <div id="timeline-container">
             <div style="font-size:0.85rem; margin-bottom:5px; color:#f2c94c;">推演时间轴：</div>
-            <input type="range" id="timeline" min="-1" max="1" step="any" value="-1">
+            <input type="range" id="timeline" min="-1" max="1" step="any" value="0">
             <div class="time-labels"><span>前</span><span>食甚</span><span>后</span></div>
             <label style="font-size:0.85rem; display:flex; align-items:center; margin-top:10px; cursor:pointer;">
                 <input type="checkbox" id="autoplay" checked style="margin-right:5px;"> 自动播放
@@ -560,7 +560,7 @@
 
             updateMoonOrbit(currentConfig.radius);
             moonOrbitTiltGroup.rotation.z = currentConfig.tiltZ;
-            timelineEl.value = -1;
+            timelineEl.value = 0;
             
             if(currentConfig.mode === 'solar') {
                 camera.position.set(earthDist + 15, 8, 15);
@@ -582,7 +582,7 @@
             const moonAngle = currentConfig.baseAngle + (t * 0.58);
             moonGroup.position.set(Math.cos(moonAngle) * currentConfig.radius, 0, Math.sin(moonAngle) * currentConfig.radius);
             
-            earth.rotation.y = t * 8; moon.rotation.y = moonAngle; 
+            earth.rotation.y = 0; moon.rotation.y = moonAngle; 
 
             eclipseUniforms.sunWorldPos.value.copy(sunLight.position);
             eclipseUniforms.earthWorldPos.value.copy(earthGroup.position);
