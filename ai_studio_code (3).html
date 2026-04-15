@@ -345,6 +345,7 @@
         const observerCanvas = document.getElementById('observer-view');
         const observerCtx = observerCanvas.getContext('2d');
         let currentObserver = { lat: 0, lon: 0 };
+        let observerRecalcAccumulator = 0;
         
         const observerMarker = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 12), new THREE.MeshBasicMaterial({ color: 0xff3333 }));
         earthGroup.add(observerMarker);
@@ -355,9 +356,10 @@
             return new THREE.Vector3(radius * Math.cos(lat) * Math.cos(lon), radius * Math.sin(lat), radius * Math.cos(lat) * Math.sin(lon));
         }
 
-        function solveBestObserver() {
+        function solveBestObserver(targetT = parseFloat(timelineEl.value)) {
             if (!currentConfig) return { lat: 0, lon: 0 };
-            const oldT = parseFloat(timelineEl.value); updatePositions(0);
+            const oldT = parseFloat(timelineEl.value);
+            updatePositions(targetT);
             let best = { lat: 0, lon: 0, score: -999 };
             for (let lat = -70; lat <= 70; lat += 10) {
                 for (let lon = -180; lon < 180; lon += 10) {
@@ -389,6 +391,13 @@
             }
             updatePositions(oldT);
             return best;
+        }
+
+        function updateObserverAnchor(targetT = parseFloat(timelineEl.value)) {
+            const best = solveBestObserver(targetT);
+            currentObserver.lat = best.lat;
+            currentObserver.lon = best.lon;
+            observerMarker.position.copy(latLonToLocal(currentObserver.lat, currentObserver.lon, earthRadius + 0.1));
         }
 
         function drawObserverView() {
@@ -553,6 +562,7 @@
             updateMoonOrbit(currentConfig.radius);
             moonOrbitTiltGroup.rotation.z = currentConfig.tiltZ;
             timelineEl.value = -1;
+            observerRecalcAccumulator = 0;
             
             if(currentConfig.mode === 'solar') {
                 camera.position.set(earthDist + 15, 8, 15);
@@ -561,9 +571,7 @@
                 camera.position.set(earthDist + 22, 5, 15);
             }
 
-            const best = solveBestObserver();
-            currentObserver.lat = best.lat; currentObserver.lon = best.lon;
-            observerMarker.position.copy(latLonToLocal(currentObserver.lat, currentObserver.lon, earthRadius + 0.1));
+            updateObserverAnchor(0);
         };
 
         function updatePositions(t) {
@@ -591,7 +599,11 @@
             else { controls.target.copy(earthGroup.position); }
         }
 
-        timelineEl.addEventListener('input', () => { autoplayEl.checked = false; });
+        timelineEl.addEventListener('input', () => {
+            autoplayEl.checked = false;
+            observerRecalcAccumulator = 0;
+            updateObserverAnchor(parseFloat(timelineEl.value));
+        });
 
         function animate() {
             requestAnimationFrame(animate);
@@ -600,6 +612,11 @@
                 t += 0.002;
                 if (t > 1) t = -1; 
                 timelineEl.value = t;
+                observerRecalcAccumulator += 0.002;
+                if (observerRecalcAccumulator >= 0.04) {
+                    updateObserverAnchor(t);
+                    observerRecalcAccumulator = 0;
+                }
             }
             updatePositions(t);
             drawObserverView();
