@@ -96,7 +96,7 @@
 
     <div id="observer-panel">
         <h2>📍 同步观测视窗</h2>
-        <span class="observer-tag">🌟 当前位置：食甚最佳观测点</span>
+        <span class="observer-tag">🌟 固定观测点：当前时间段最佳观测位置</span>
         <canvas id="observer-view" width="300" height="300"></canvas>
         <div id="observer-meta">等待初始化观测点…</div>
     </div>
@@ -355,9 +355,10 @@
             return new THREE.Vector3(radius * Math.cos(lat) * Math.cos(lon), radius * Math.sin(lat), radius * Math.cos(lat) * Math.sin(lon));
         }
 
-        function solveBestObserver() {
+        function solveBestObserver(targetT = parseFloat(timelineEl.value)) {
             if (!currentConfig) return { lat: 0, lon: 0 };
-            const oldT = parseFloat(timelineEl.value); updatePositions(0);
+            const oldT = parseFloat(timelineEl.value);
+            updatePositions(targetT);
             let best = { lat: 0, lon: 0, score: -999 };
             for (let lat = -70; lat <= 70; lat += 10) {
                 for (let lon = -180; lon < 180; lon += 10) {
@@ -561,7 +562,7 @@
                 camera.position.set(earthDist + 22, 5, 15);
             }
 
-            const best = solveBestObserver();
+            const best = solveBestObserver(parseFloat(timelineEl.value));
             currentObserver.lat = best.lat; currentObserver.lon = best.lon;
             observerMarker.position.copy(latLonToLocal(currentObserver.lat, currentObserver.lon, earthRadius + 0.1));
         };
@@ -591,7 +592,9 @@
             else { controls.target.copy(earthGroup.position); }
         }
 
-        timelineEl.addEventListener('input', () => { autoplayEl.checked = false; });
+        timelineEl.addEventListener('input', () => {
+            autoplayEl.checked = false;
+        });
 
         function animate() {
             requestAnimationFrame(animate);
