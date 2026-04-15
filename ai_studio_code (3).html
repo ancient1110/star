@@ -345,7 +345,6 @@
         const observerCanvas = document.getElementById('observer-view');
         const observerCtx = observerCanvas.getContext('2d');
         let currentObserver = { lat: 0, lon: 0 };
-        let observerRecalcAccumulator = 0;
         
         const observerMarker = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 12), new THREE.MeshBasicMaterial({ color: 0xff3333 }));
         earth.add(observerMarker);
@@ -393,7 +392,7 @@
             return best;
         }
 
-        function updateObserverAnchor(targetT = parseFloat(timelineEl.value)) {
+        function updateObserverAnchor(targetT = 0) {
             const best = solveBestObserver(targetT);
             currentObserver.lat = best.lat;
             currentObserver.lon = best.lon;
@@ -562,7 +561,6 @@
             updateMoonOrbit(currentConfig.radius);
             moonOrbitTiltGroup.rotation.z = currentConfig.tiltZ;
             timelineEl.value = -1;
-            observerRecalcAccumulator = 0;
             
             if(currentConfig.mode === 'solar') {
                 camera.position.set(earthDist + 15, 8, 15);
@@ -571,9 +569,8 @@
                 camera.position.set(earthDist + 22, 5, 15);
             }
 
-            const best = solveBestObserver(parseFloat(timelineEl.value));
-            currentObserver.lat = best.lat; currentObserver.lon = best.lon;
-            observerMarker.position.copy(latLonToLocal(currentObserver.lat, currentObserver.lon, earthRadius + 0.1));
+            // 观测点固定在食甚（时间轴中点）对应的最佳位置，避免播放时持续漂移
+            updateObserverAnchor(0);
         };
 
         function updatePositions(t) {
@@ -612,11 +609,6 @@
                 t += 0.002;
                 if (t > 1) t = -1; 
                 timelineEl.value = t;
-                observerRecalcAccumulator += 0.002;
-                if (observerRecalcAccumulator >= 0.04) {
-                    updateObserverAnchor(t);
-                    observerRecalcAccumulator = 0;
-                }
             }
             updatePositions(t);
             drawObserverView();
