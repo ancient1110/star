@@ -600,6 +600,9 @@
 
         timelineEl.addEventListener('input', () => {
             autoplayEl.checked = false;
+            const t = parseFloat(timelineEl.value);
+            updateObserverAnchor(t);
+            lastObserverSyncT = t;
         });
 
         function animate() {
